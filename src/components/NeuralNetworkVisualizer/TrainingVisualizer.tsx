@@ -1,16 +1,14 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { Layer, LossType, TrainingStep, Weight } from '@/types/neural-network'
+import { Layer, LossType, Weight } from '@/types/neural-network'
 import { initializeWeights, forwardPass, calculateLoss, backpropagate } from '@/utils/neural-network'
 import TrainingChart from './TrainingChart'
 
-interface TrainingVisualizerProps {
-  layers: Layer[]
-  dataset: { x: number; y: number }[]
-  lossFunction: LossType
-}
-
+/**
+ * AnimationStep is used for the "playback" animation
+ * that replays forward passes over time (epochs/samples).
+ */
 interface AnimationStep {
   activations: number[][]
   weights: Weight[]
@@ -21,7 +19,11 @@ interface AnimationStep {
   predictions: { x: number; y: number; predicted: number }[]
 }
 
-interface TrainingStep {
+/**
+ * TrainingStep is used specifically in step-by-step mode
+ * to store both forward and backward details.
+ */
+interface VisualizerTrainingStep {
   type: 'forward' | 'backward'
   activations: number[][]
   weights: Weight[]
@@ -36,13 +38,27 @@ interface TrainingStep {
   actual?: number
 }
 
+interface TrainingVisualizerProps {
+  layers: Layer[]
+  dataset: { x: number; y: number }[]
+  lossFunction: LossType
+}
+
 export default function TrainingVisualizer({
   layers,
   dataset,
   lossFunction
 }: TrainingVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [currentStep, setCurrentStep] = useState<TrainingStep | null>(null)
+
+  // Step-by-step training states
+  const [currentStep, setCurrentStep] = useState<VisualizerTrainingStep | null>(null)
+  const [trainingSteps, setTrainingSteps] = useState<VisualizerTrainingStep[]>([])
+  const [stepMode, setStepMode] = useState<boolean>(false)
+  const [sampleIndex, setSampleIndex] = useState<number>(0)
+  const [stepPhase, setStepPhase] = useState<'forward' | 'backward'>('forward')
+
+  // Full training states
   const [isTraining, setIsTraining] = useState(false)
   const [weights, setWeights] = useState<Weight[]>([])
   const [biases, setBiases] = useState<number[]>([])
@@ -56,24 +72,24 @@ export default function TrainingVisualizer({
   const [totalLoss, setTotalLoss] = useState<number>(0)
   const [lossHistory, setLossHistory] = useState<number[]>([])
   const [currentPredictions, setCurrentPredictions] = useState<{ x: number; y: number; predicted: number }[]>([])
-  const [trainingSteps, setTrainingSteps] = useState<TrainingStep[]>([])
-  const [stepMode, setStepMode] = useState<boolean>(false)
-  const [sampleIndex, setSampleIndex] = useState<number>(0)
-  const [stepPhase, setStepPhase] = useState<'forward' | 'backward'>('forward')
 
-  // Initialize network parameters
+  // --------------------------------------------------------------------------
+  //  Initialization
+  // --------------------------------------------------------------------------
   useEffect(() => {
     const initialWeights = initializeWeights(layers)
-    const totalBiases = layers.reduce((sum, layer, i) => 
-      i > 0 ? sum + layer.neurons : sum, 0
+    // If you really want biases in a single array, you can keep this approach,
+    // but confirm the rest of your forwardPass/backprop logic expects it.
+    const totalBiases = layers.reduce((sum, layer, i) =>
+      i > 0 ? sum + layer.neurons : sum,
+      0
     )
     const initialBiases = Array(totalBiases).fill(0)
-    
+
     setWeights(initialWeights)
     setBiases(initialBiases)
   }, [layers])
 
-  // Add debug logging
   useEffect(() => {
     console.log('Current state:', {
       layers,
@@ -83,8 +99,11 @@ export default function TrainingVisualizer({
     })
   }, [layers, dataset, weights, biases])
 
-  // Drawing functions
-  const getTextColor = () => window.matchMedia('(prefers-color-scheme: dark)').matches ? '#fff' : '#000'
+  // --------------------------------------------------------------------------
+  //  Drawing / Visualization Helpers
+  // --------------------------------------------------------------------------
+  const getTextColor = () =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? '#fff' : '#000'
 
   const drawNeuron = (
     ctx: CanvasRenderingContext2D,
@@ -95,24 +114,23 @@ export default function TrainingVisualizer({
     bias?: number,
     isHighlighted: boolean = false
   ) => {
-    // Draw neuron circle
     ctx.beginPath()
     ctx.arc(x, y, radius, 0, Math.PI * 2)
-    ctx.fillStyle = isHighlighted ? 
-      `rgba(59, 130, 246, ${Math.abs(value)})` :
-      `rgba(156, 163, 175, ${Math.abs(value)})`
+    ctx.fillStyle = isHighlighted
+      ? `rgba(59, 130, 246, ${Math.abs(value)})`
+      : `rgba(156, 163, 175, ${Math.abs(value)})`
     ctx.fill()
     ctx.strokeStyle = isHighlighted ? '#1e40af' : '#4b5563'
     ctx.stroke()
 
-    // Draw activation value
+    // Activation text
     ctx.fillStyle = getTextColor()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.font = '12px Arial'
     ctx.fillText(`a: ${value.toFixed(2)}`, x, y - 5)
 
-    // Draw bias if provided
+    // Bias text
     if (bias !== undefined) {
       ctx.fillStyle = getTextColor()
       ctx.font = '11px Arial'
@@ -131,20 +149,20 @@ export default function TrainingVisualizer({
     isActive: boolean = false
   ) => {
     const normalizedWeight = Math.tanh(weight)
-    
-    // Draw connection line
+
     ctx.beginPath()
     ctx.moveTo(startX, startY)
     ctx.lineTo(endX, endY)
-    ctx.strokeStyle = isActive ?
-      (normalizedWeight > 0 ? 
-        `rgba(59, 130, 246, ${Math.abs(normalizedWeight)})` :
-        `rgba(239, 68, 68, ${Math.abs(normalizedWeight)})`) :
-      `rgba(156, 163, 175, ${Math.abs(normalizedWeight) * 0.5})`
+    ctx.strokeStyle = isActive
+      ? (normalizedWeight > 0
+        ? `rgba(59, 130, 246, ${Math.abs(normalizedWeight)})`
+        : `rgba(239, 68, 68, ${Math.abs(normalizedWeight)})`)
+      : `rgba(156, 163, 175, ${Math.abs(normalizedWeight) * 0.5})`
+
     ctx.lineWidth = Math.abs(normalizedWeight) * 3
     ctx.stroke()
 
-    // Draw weight value
+    // Weight text
     const midX = (startX + endX) / 2
     const midY = (startY + endY) / 2
     ctx.fillStyle = getTextColor()
@@ -153,7 +171,7 @@ export default function TrainingVisualizer({
     ctx.font = '11px Arial'
     ctx.fillText(`w: ${weight.toFixed(2)}`, midX, midY - 8)
 
-    // Draw gradient if available
+    // Gradient text
     if (gradient !== undefined && isActive) {
       ctx.fillStyle = '#d97706' // Amber color for gradients
       ctx.font = '11px Arial'
@@ -161,10 +179,32 @@ export default function TrainingVisualizer({
     }
   }
 
-  const drawNetwork = (
+  const drawInformationOverlay = (
     ctx: CanvasRenderingContext2D,
-    step: TrainingStep
+    step: VisualizerTrainingStep
   ) => {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+    // If backward pass is displayed, we have a bit more text
+    const boxHeight = step.type === 'backward' ? 120 : 80
+    ctx.fillRect(10, 10, 200, boxHeight)
+
+    ctx.fillStyle = getTextColor()
+    ctx.font = '14px Arial'
+
+    ctx.fillText(`Sample: ${step.sampleIndex + 1}/${dataset.length}`, 20, 30)
+    ctx.fillText(`Loss: ${step.loss.toFixed(4)}`, 20, 50)
+
+    if (step.prediction !== undefined) {
+      ctx.fillText(`Prediction: ${step.prediction.toFixed(4)}`, 20, 70)
+      ctx.fillText(`Actual: ${step.actual?.toFixed(4)}`, 20, 90)
+    }
+
+    if (step.type === 'backward') {
+      ctx.fillText('Updating weights...', 20, 110)
+    }
+  }
+
+  const drawNetwork = (ctx: CanvasRenderingContext2D, step: VisualizerTrainingStep) => {
     const canvas = ctx.canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
@@ -172,12 +212,12 @@ export default function TrainingVisualizer({
     const maxNeurons = Math.max(...layers.map(l => l.neurons))
     const neuronSpacing = canvas.height / (maxNeurons + 1)
 
-    // Draw title for current pass
+    // Title
     ctx.fillStyle = getTextColor()
     ctx.font = 'bold 16px Arial'
     ctx.textAlign = 'center'
     ctx.fillText(
-      `${step.type === 'forward' ? 'Forward Pass' : 'Backward Pass'}`,
+      step.type === 'forward' ? 'Forward Pass' : 'Backward Pass',
       canvas.width / 2,
       30
     )
@@ -185,29 +225,27 @@ export default function TrainingVisualizer({
     // Draw connections
     layers.forEach((layer, l) => {
       if (l === 0) return
-
       const prevLayer = layers[l - 1]
       const layerX = layerSpacing * (l + 1)
       const prevLayerX = layerSpacing * l
 
-      // Use Array(n).fill() to create arrays of indices to iterate over
       Array(layer.neurons).fill(0).forEach((_, n) => {
-        const neuronY = (neuronSpacing * (n + 1))
+        const neuronY = neuronSpacing * (n + 1)
         Array(prevLayer.neurons).fill(0).forEach((_, pn) => {
-          const prevNeuronY = (neuronSpacing * (pn + 1))
-          const weight = step.weights.find(w => 
-            w.sourceLayer === l - 1 && 
-            w.sourceNeuron === pn && 
+          const prevNeuronY = neuronSpacing * (pn + 1)
+          const weightObj = step.weights.find(w =>
+            w.sourceLayer === l - 1 &&
+            w.sourceNeuron === pn &&
             w.targetNeuron === n
           )
-          
-          if (weight) {
-            const gradient = step.type === 'backward' ? 
-              step.gradients?.weights.find(w =>
-                w.sourceLayer === l - 1 &&
-                w.sourceNeuron === pn &&
-                w.targetNeuron === n
-              )?.gradient : undefined
+          if (weightObj) {
+            const gradient = step.type === 'backward'
+              ? step.gradients?.weights.find(g =>
+                  g.sourceLayer === l - 1 &&
+                  g.sourceNeuron === pn &&
+                  g.targetNeuron === n
+                )?.gradient
+              : undefined
 
             drawConnection(
               ctx,
@@ -215,7 +253,7 @@ export default function TrainingVisualizer({
               prevNeuronY,
               layerX,
               neuronY,
-              weight.value,
+              weightObj.value,
               gradient,
               step.type === 'backward'
             )
@@ -224,65 +262,39 @@ export default function TrainingVisualizer({
       })
     })
 
-    // Draw neurons with their values
+    // Draw neurons
     layers.forEach((layer, l) => {
       const layerX = layerSpacing * (l + 1)
-      
-      // Draw layer label
+
+      // Label
       ctx.fillStyle = getTextColor()
       ctx.font = 'bold 14px Arial'
       ctx.textAlign = 'center'
-      ctx.fillText(
-        `Layer ${l + 1} (${layer.type})`,
-        layerX,
-        neuronSpacing / 2
-      )
+      ctx.fillText(`Layer ${l + 1} (${layer.type})`, layerX, neuronSpacing / 2)
 
-      // Use Array(n).fill() to create an array of indices to iterate over
       Array(layer.neurons).fill(0).forEach((_, n) => {
-        const neuronY = (neuronSpacing * (n + 1))
+        const neuronY = neuronSpacing * (n + 1)
         const activation = step.activations[l][n]
-        const bias = step.biases[l] ? step.biases[l][n] : undefined
+        // If your biases are in a 1D array, you need an index offset
+        // For now, we check step.biases[l][n] if your logic truly stores them as 2D
+        let biasVal: number | undefined
+        if (step.biases && Array.isArray(step.biases[l])) {
+          // @ts-ignore – depends on how you store biases
+          biasVal = step.biases[l][n]
+        }
         const isHighlighted = step.type === 'backward'
 
-        drawNeuron(
-          ctx,
-          layerX,
-          neuronY,
-          activation,
-          20,
-          bias,
-          isHighlighted
-        )
+        drawNeuron(ctx, layerX, neuronY, activation, 20, biasVal, isHighlighted)
       })
     })
 
-    // Draw step information
+    // Info overlay
     drawInformationOverlay(ctx, step)
   }
 
-  const drawInformationOverlay = (
-    ctx: CanvasRenderingContext2D,
-    step: TrainingStep
-  ) => {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
-    ctx.fillRect(10, 10, 200, step.type === 'backward' ? 120 : 80)
-    ctx.fillStyle = getTextColor()
-    ctx.font = '14px Arial'
-    
-    ctx.fillText(`Sample: ${step.sampleIndex + 1}/${dataset.length}`, 20, 30)
-    ctx.fillText(`Loss: ${step.loss.toFixed(4)}`, 20, 50)
-    
-    if (step.prediction !== undefined) {
-      ctx.fillText(`Prediction: ${step.prediction.toFixed(4)}`, 20, 70)
-      ctx.fillText(`Actual: ${step.actual?.toFixed(4)}`, 20, 90)
-    }
-    
-    if (step.type === 'backward') {
-      ctx.fillText('Updating weights...', 20, 110)
-    }
-  }
-
+  // --------------------------------------------------------------------------
+  //  Animation Controls
+  // --------------------------------------------------------------------------
   const playAnimation = () => {
     if (currentStepIndex >= animationSteps.length - 1) {
       setCurrentStepIndex(0)
@@ -311,47 +323,51 @@ export default function TrainingVisualizer({
     }
   }
 
-  // Handle automatic playback
+  // Handle auto-play
   useEffect(() => {
-    let animationFrame: number
-
-    const animate = () => {
-      if (isPlaying && currentStepIndex < animationSteps.length - 1) {
-        setCurrentStepIndex(prev => prev + 1)
-      } else if (currentStepIndex >= animationSteps.length - 1) {
-        setIsPlaying(false)
-      }
+    if (!isPlaying) return
+    if (currentStepIndex >= animationSteps.length - 1) {
+      setIsPlaying(false)
+      return
     }
 
-    if (isPlaying) {
-      const timeoutId = setTimeout(animate, playbackSpeed)
-      return () => clearTimeout(timeoutId)
-    }
-  }, [isPlaying, currentStepIndex, animationSteps.length, playbackSpeed])
+    const timeoutId = setTimeout(() => {
+      setCurrentStepIndex(prev => prev + 1)
+    }, playbackSpeed)
 
-  // Update visualization when step changes
+    return () => clearTimeout(timeoutId)
+  }, [isPlaying, currentStepIndex, animationSteps, playbackSpeed])
+
+  // Whenever currentStepIndex changes, redraw
   useEffect(() => {
-    if (animationSteps[currentStepIndex] && canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d')
-      if (ctx) {
-        const step = animationSteps[currentStepIndex]
-        drawNetwork(ctx, {
-          type: 'forward',
-          activations: step.activations,
-          weights: step.weights,
-          biases: step.biases,
-          loss: step.loss,
-          sampleIndex: step.sampleIndex
-        })
-      }
-    }
+    if (!animationSteps[currentStepIndex] || !canvasRef.current) return
+    const ctx = canvasRef.current.getContext('2d')
+    if (!ctx) return
+
+    const stepData = animationSteps[currentStepIndex]
+    // We'll just show the forward pass view
+    drawNetwork(ctx, {
+      type: 'forward',
+      activations: stepData.activations,
+      weights: stepData.weights,
+      biases: stepData.biases,
+      loss: stepData.loss,
+      sampleIndex: stepData.sampleIndex
+    } as VisualizerTrainingStep)
   }, [currentStepIndex, animationSteps])
 
+  // --------------------------------------------------------------------------
+  //  Full Training
+  // --------------------------------------------------------------------------
   const startTraining = async () => {
     if (!dataset.length || isTraining) return
     if (!canvasRef.current) return
 
-    console.log('Starting training with params:', { learningRate, epochs, dataset: dataset.length })
+    console.log('Starting training with params:', {
+      learningRate,
+      epochs,
+      datasetSize: dataset.length
+    })
 
     setIsTraining(true)
     setAnimationSteps([])
@@ -359,13 +375,14 @@ export default function TrainingVisualizer({
     setCurrentEpoch(0)
     setTotalLoss(0)
 
-    // Re-initialize weights and biases
+    // Re-init weights/biases
     const initialWeights = initializeWeights(layers)
-    const totalBiases = layers.reduce((sum, layer, i) => 
-      i > 0 ? sum + layer.neurons : sum, 0
+    const totalBiases = layers.reduce((sum, layer, i) =>
+      i > 0 ? sum + layer.neurons : sum,
+      0
     )
     const initialBiases = Array(totalBiases).fill(0)
-    
+
     let currentWeights = [...initialWeights]
     let currentBiases = [...initialBiases]
     const steps: AnimationStep[] = []
@@ -373,23 +390,16 @@ export default function TrainingVisualizer({
 
     try {
       for (let epoch = 0; epoch < epochs; epoch++) {
-        if (!isTraining) break // Allow stopping mid-training
+        if (!isTraining) break // user clicked stop?
 
         let epochLoss = 0
         setCurrentEpoch(epoch)
 
         for (let sampleIndex = 0; sampleIndex < dataset.length; sampleIndex++) {
           const sample = dataset[sampleIndex]
-          
-          // Forward pass
-          const { activations, weightedSums } = forwardPass(
-            [sample.x],
-            layers,
-            currentWeights,
-            currentBiases
-          )
 
-          // Ensure we have a valid prediction
+          // Forward pass
+          const { activations } = forwardPass([sample.x], layers, currentWeights, currentBiases)
           const prediction = activations[activations.length - 1][0]
           if (isNaN(prediction)) {
             console.error('Invalid prediction', { activations, sample })
@@ -399,10 +409,10 @@ export default function TrainingVisualizer({
           const loss = calculateLoss(prediction, sample.y, lossFunction)
           epochLoss += loss
 
-          // Store step for visualization
+          // Record an animation step
           steps.push({
             activations,
-            weights: currentWeights.map(w => ({ ...w })), // Deep copy
+            weights: currentWeights.map(w => ({ ...w })),
             biases: [...currentBiases],
             loss,
             epoch,
@@ -410,7 +420,7 @@ export default function TrainingVisualizer({
             predictions: []
           })
 
-          // Backpropagate
+          // Backprop
           const { weightGradients, biasGradients } = backpropagate(
             [sample.x],
             sample.y,
@@ -427,38 +437,33 @@ export default function TrainingVisualizer({
           }))
 
           // Update biases with gradient clipping
-          currentBiases = currentBiases.map((b, i) => 
+          currentBiases = currentBiases.map((b, i) =>
             b - learningRate * Math.max(Math.min(biasGradients[i], 1), -1)
           )
 
-          // Force state update every few steps
+          // Update predictions for the entire dataset occasionally
           if (sampleIndex % 5 === 0) {
-            let currentPredictions: { x: number; y: number; predicted: number }[] = []
-        
-            // Generate predictions for the entire dataset
-            dataset.forEach(sample => {
-              const { activations } = forwardPass(
-                [sample.x],
-                layers,
-                currentWeights,
-                currentBiases
-              )
-              const predicted = activations[activations.length - 1][0]
-              currentPredictions.push({ x: sample.x, y: sample.y, predicted })
+            const currentPreds: { x: number; y: number; predicted: number }[] = []
+            dataset.forEach(s => {
+              const { activations: ap } = forwardPass([s.x], layers, currentWeights, currentBiases)
+              currentPreds.push({ x: s.x, y: s.y, predicted: ap[ap.length - 1][0] })
             })
-            setCurrentPredictions(currentPredictions)
+            setCurrentPredictions(currentPreds)
             setLossHistory(losses)
             setAnimationSteps([...steps])
             setTotalLoss(epochLoss / (sampleIndex + 1))
+
+            // A short pause just so UI can update
             await new Promise(resolve => setTimeout(resolve, 50))
           }
         }
 
         const avgEpochLoss = epochLoss / dataset.length
+        losses.push(avgEpochLoss)
         setTotalLoss(avgEpochLoss)
         console.log(`Epoch ${epoch + 1}/${epochs}, Loss: ${avgEpochLoss.toFixed(4)}`)
-        
-        // Early stopping if loss is very small
+
+        // Early stopping
         if (avgEpochLoss < 0.0001) {
           console.log('Reached convergence, stopping early')
           break
@@ -475,17 +480,31 @@ export default function TrainingVisualizer({
     }
   }
 
+  // --------------------------------------------------------------------------
+  //  Step-by-Step Training
+  // --------------------------------------------------------------------------
   const performSingleStep = async () => {
     if (!dataset.length || sampleIndex >= dataset.length) return
     const sample = dataset[sampleIndex]
 
     if (stepPhase === 'forward') {
-      // FORWARD pass computation and visualization
+      // Forward pass
       const { activations } = forwardPass([sample.x], layers, weights, biases)
       const prediction = activations[activations.length - 1][0]
       const loss = calculateLoss(prediction, sample.y, lossFunction)
 
-      const forwardStep: TrainingStep = {
+      // Make predictions for all data
+      const allPredictions = dataset.map(point => {
+        const { activations: pointActs } = forwardPass([point.x], layers, weights, biases)
+        return {
+          x: point.x,
+          y: point.y,
+          predicted: pointActs[pointActs.length - 1][0]
+        }
+      })
+      setCurrentPredictions(allPredictions)
+
+      const forwardStep: VisualizerTrainingStep = {
         type: 'forward',
         activations,
         weights: [...weights],
@@ -498,10 +517,9 @@ export default function TrainingVisualizer({
       setTrainingSteps(prev => [...prev, forwardStep])
       setCurrentStep(forwardStep)
       setCurrentStepIndex(prev => prev + 1)
-      // Switch phase to backward for next click
       setStepPhase('backward')
     } else {
-      // BACKWARD pass computation and visualization
+      // Backward pass
       const { weightGradients, biasGradients } = backpropagate(
         [sample.x],
         sample.y,
@@ -510,6 +528,7 @@ export default function TrainingVisualizer({
         biases,
         lossFunction
       )
+
       const newWeights = weights.map((w, i) => ({
         ...w,
         value: w.value - learningRate * weightGradients[i].gradient
@@ -518,9 +537,9 @@ export default function TrainingVisualizer({
         b - learningRate * biasGradients[i]
       )
 
-      const backwardStep: TrainingStep = {
+      const backwardStep: VisualizerTrainingStep = {
         type: 'backward',
-        activations: trainingSteps[trainingSteps.length - 1].activations, // use same activations from forward pass
+        activations: trainingSteps[trainingSteps.length - 1].activations,
         weights: newWeights,
         biases: newBiases,
         loss: trainingSteps[trainingSteps.length - 1].loss,
@@ -533,10 +552,12 @@ export default function TrainingVisualizer({
       setTrainingSteps(prev => [...prev, backwardStep])
       setCurrentStep(backwardStep)
       setCurrentStepIndex(prev => prev + 1)
-      // Update the network state
+
+      // Update the network
       setWeights(newWeights)
       setBiases(newBiases)
-      // Move to the next sample and reset phase to forward
+
+      // Move to next sample
       if (sampleIndex < dataset.length - 1) {
         setSampleIndex(prev => prev + 1)
       }
@@ -544,26 +565,32 @@ export default function TrainingVisualizer({
     }
   }
 
-  // Make sure canvas is initialized
+  // --------------------------------------------------------------------------
+  //  Initial draw (once weights/biases are ready)
+  // --------------------------------------------------------------------------
   useEffect(() => {
     const ctx = canvasRef.current?.getContext('2d')
-    if (ctx && weights.length > 0 && dataset.length > 0) {
-      const { activations } = forwardPass([dataset[0].x], layers, weights, biases)
-      drawNetwork(ctx, {
-        type: 'forward',
-        activations,
-        weights,
-        biases,
-        loss: 0,
-        sampleIndex: 0
-      })
-    }
+    if (!ctx || !weights.length || !dataset.length) return
+
+    const { activations } = forwardPass([dataset[0].x], layers, weights, biases)
+    drawNetwork(ctx, {
+      type: 'forward',
+      activations,
+      weights,
+      biases,
+      loss: 0,
+      sampleIndex: 0
+    } as VisualizerTrainingStep)
   }, [weights, biases, dataset, layers])
 
+  // --------------------------------------------------------------------------
+  //  UI
+  // --------------------------------------------------------------------------
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Training Visualization</h3>
-      
+
+      {/* Training parameters */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div className="space-y-2">
           <label className="block text-sm font-medium">Learning Rate:</label>
@@ -583,7 +610,7 @@ export default function TrainingVisualizer({
           <input
             type="number"
             value={epochs}
-            onChange={(e) => setEpochs(Math.max(1, parseInt(e.target.value)))}
+            onChange={(e) => setEpochs(Math.max(1, parseInt(e.target.value) || 1))}
             min="1"
             className="w-full px-3 py-2 border rounded-md"
           />
@@ -600,6 +627,7 @@ export default function TrainingVisualizer({
         </div>
       </div>
 
+      {/* Training progress info */}
       {isTraining && (
         <div className="space-y-2 p-4 bg-blue-50 rounded-md">
           <p>Training Progress:</p>
@@ -608,6 +636,7 @@ export default function TrainingVisualizer({
         </div>
       )}
 
+      {/* Animation controls (only show if we have steps) */}
       {animationSteps.length > 0 && (
         <div className="flex gap-2 items-center">
           <button onClick={stepBackward} className="px-3 py-1 bg-gray-200 rounded">
@@ -634,6 +663,7 @@ export default function TrainingVisualizer({
         </div>
       )}
 
+      {/* Main Canvas + Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <canvas
           ref={canvasRef}
@@ -641,9 +671,14 @@ export default function TrainingVisualizer({
           height={400}
           className="border rounded-lg bg-white dark:bg-gray-800"
         />
-     
+        <TrainingChart
+          predictions={currentPredictions}
+          dataset={dataset}
+          loss={lossHistory}
+        />
       </div>
 
+      {/* Animation step info */}
       {animationSteps[currentStepIndex] && (
         <div className="space-y-2">
           <p>Epoch: {animationSteps[currentStepIndex].epoch + 1}</p>
@@ -652,13 +687,7 @@ export default function TrainingVisualizer({
         </div>
       )}
 
-         
-<TrainingChart
-          predictions={currentPredictions}
-          dataset={dataset}
-          loss={lossHistory}
-        />
-
+      {/* Step Mode Controls */}
       <div className="flex gap-4 mb-4">
         <button
           onClick={() => setStepMode(!stepMode)}
@@ -668,7 +697,7 @@ export default function TrainingVisualizer({
         >
           {stepMode ? 'Step Mode Active' : 'Enable Step Mode'}
         </button>
-        
+
         {stepMode && (
           <button
             onClick={performSingleStep}
@@ -680,6 +709,7 @@ export default function TrainingVisualizer({
         )}
       </div>
 
+      {/* Current step details */}
       {currentStep && (
         <div className="p-4 bg-gray-50 rounded-lg">
           <h4 className="font-medium mb-2">Current Step Details</h4>
