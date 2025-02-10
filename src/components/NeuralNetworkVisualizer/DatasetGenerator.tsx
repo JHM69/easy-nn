@@ -6,15 +6,20 @@ import { evaluate } from 'mathjs'
 interface DatasetGeneratorProps {
   equation: string
   dataset: { x: number; y: number }[]
-  onDatasetChange: (dataset: { x: number; y: number }[]) => void
+  trainData: { x: number; y: number }[]
+  testData: { x: number; y: number }[]
+  onDatasetChange: (dataset: { x: number; y: number }[], trainData: { x: number; y: number }[], testData: { x: number; y: number }[]) => void
 }
 
 export default function DatasetGenerator({
   equation,
   dataset,
+  trainData,
+  testData,
   onDatasetChange
 }: DatasetGeneratorProps) {
   const [range, setRange] = useState({ min: -10, max: 10, points: 100 })
+  const [trainSplit, setTrainSplit] = useState(0.8) // 80% train, 20% test
   const [error, setError] = useState<string>('')
 
   const generateDataset = () => {
@@ -27,19 +32,16 @@ export default function DatasetGenerator({
       const step = (range.max - range.min) / (range.points - 1)
       const newDataset = []
       
-      // Clean up the equation by removing 'y=' or 'f(x)=' and whitespace
+      // Clean up the equation
       const cleanEquation = equation
         .replace(/\s+/g, '')
         .replace(/^y=/, '')
         .replace(/^f\(x\)=/, '')
-      
-      console.log('Generating dataset with equation:', cleanEquation)
 
+      // Generate points
       for (let x = range.min; x <= range.max; x += step) {
         try {
           const y = evaluate(cleanEquation, { x })
-          
-          // Validate the result is a number
           if (typeof y === 'number' && !isNaN(y) && isFinite(y)) {
             newDataset.push({ x, y })
           }
@@ -53,9 +55,16 @@ export default function DatasetGenerator({
         return
       }
 
-      console.log('Generated dataset:', newDataset.slice(0, 5))
+      // Shuffle dataset
+      const shuffled = [...newDataset].sort(() => Math.random() - 0.5)
+      
+      // Split into train and test
+      const splitIndex = Math.floor(shuffled.length * trainSplit)
+      const newTrainData = shuffled.slice(0, splitIndex)
+      const newTestData = shuffled.slice(splitIndex)
+
       setError('')
-      onDatasetChange(newDataset)
+      onDatasetChange(newDataset, newTrainData, newTestData)
 
     } catch (err) {
       console.error('Dataset generation error:', err)
@@ -98,6 +107,18 @@ export default function DatasetGenerator({
             className="px-2 py-1 border rounded dark:bg-gray-800"
           />
         </div>
+
+        <div className="space-y-2">
+          <label className="block">Train Split (%):</label>
+          <input
+            type="number"
+            value={trainSplit * 100}
+            onChange={(e) => setTrainSplit(Math.max(0.1, Math.min(0.9, Number(e.target.value) / 100)))}
+            min="10"
+            max="90"
+            className="px-2 py-1 border rounded dark:bg-gray-800"
+          />
+        </div>
       </div>
 
       <button
@@ -114,9 +135,11 @@ export default function DatasetGenerator({
 
       {dataset.length > 0 && !error && (
         <div className="text-sm space-y-2">
-          <p>Generated {dataset.length} points</p>
+          <p>Generated {dataset.length} total points</p>
+          <p>Train set: {trainData.length} points</p>
+          <p>Test set: {testData.length} points</p>
           <p className="text-gray-600">
-            Sample points: {dataset.slice(0, 3).map(d => `(${d.x.toFixed(2)}, ${d.y.toFixed(2)})`).join(', ')}...
+            Sample train points: {trainData.slice(0, 3).map(d => `(${d.x.toFixed(2)}, ${d.y.toFixed(2)})`).join(', ')}...
           </p>
         </div>
       )}

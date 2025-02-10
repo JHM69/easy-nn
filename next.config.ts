@@ -8,3 +8,12 @@ const nextConfig: NextConfig = {
 };
 
 export default withNextIntl(nextConfig);
+export const config = {
+  transpilePackages: ['chart.js'],
+  webpack: (config: { externals: unknown[]; }) => {
+    config.externals = [...(config.externals || []), { canvas: 'canvas' }];
+    return config;
+  },
+};
+
+Object.assign(nextConfig, config);

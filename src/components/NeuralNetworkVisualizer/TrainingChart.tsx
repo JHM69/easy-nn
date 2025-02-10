@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { Chart, ChartConfiguration } from 'chart.js/auto'
 
 interface TrainingChartProps {
   predictions: { x: number; y: number; predicted: number }[]
@@ -9,78 +8,88 @@ interface TrainingChartProps {
   loss: number[]
 }
 
-export default function TrainingChart({ predictions, dataset, loss }: TrainingChartProps) {
+export default function TrainingChart({ predictions = [], dataset = [], loss = [] }: TrainingChartProps) {
   const chartRef = useRef<HTMLCanvasElement>(null)
-  const chartInstance = useRef<Chart | null>(null)
+  const chartInstanceRef = useRef<any>(null)
 
   useEffect(() => {
-    if (!chartRef.current) return
+    const initChart = async () => {
+      if (!chartRef.current) return
 
-    // Destroy previous chart if it exists
-    if (chartInstance.current) {
-      chartInstance.current.destroy()
-    }
+      try {
+        const Chart = (await import('chart.js/auto')).default
 
-    const ctx = chartRef.current.getContext('2d')
-    if (!ctx) return
-
-    // Sort predictions by x for smooth line
-    const sortedPredictions = [...predictions].sort((a, b) => a.x - b.x)
-
-    const config: ChartConfiguration = {
-      type: 'scatter',
-      data: {
-        datasets: [
-          {
-            label: 'Training Data',
-            data: dataset.map(point => ({ x: point.x, y: point.y })),
-            backgroundColor: 'rgba(54, 162, 235, 0.5)',
-            pointRadius: 4,
-          },
-          {
-            label: 'Predictions',
-            data: sortedPredictions.map(point => ({ x: point.x, y: point.predicted })),
-            backgroundColor: 'rgba(255, 99, 132, 0.5)',
-            pointRadius: 4,
-            showLine: true, // Connect points with a line
-            borderColor: 'rgba(255, 99, 132, 0.5)',
-            borderWidth: 2,
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        animation: false,
-        scales: {
-          x: {
-            type: 'linear',
-            position: 'bottom',
-            title: {
-              display: true,
-              text: 'Input (x)'
-            }
-          },
-          y: {
-            title: {
-              display: true,
-              text: 'Output (y)'
-            }
-          }
-        },
-        plugins: {
-          legend: {
-            display: true,
-            position: 'top'
-          }
+        if (chartInstanceRef.current) {
+          chartInstanceRef.current.destroy()
         }
+
+        const ctx = chartRef.current.getContext('2d')
+        if (!ctx) return
+
+        // Ensure predictions and dataset are valid arrays
+        const validPredictions = Array.isArray(predictions) ? predictions : []
+        const validDataset = Array.isArray(dataset) ? dataset : []
+
+        // Filter and sort data
+        const sortedPredictions = [...validPredictions]
+          .filter(p => p && typeof p.x === 'number' && typeof p.predicted === 'number')
+          .sort((a, b) => a.x - b.x)
+
+        const validDataPoints = validDataset
+          .filter(point => point && typeof point.x === 'number' && typeof point.y === 'number')
+
+        chartInstanceRef.current = new Chart(ctx, {
+          type: 'scatter',
+          data: {
+            datasets: [
+              {
+                label: 'Training Data',
+                data: validDataPoints.map(point => ({ x: point.x, y: point.y })),
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                pointRadius: 4,
+              },
+              {
+                label: 'Predictions',
+                data: sortedPredictions.map(point => ({ x: point.x, y: point.predicted })),
+                backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                pointRadius: 4,
+                showLine: true,
+                borderColor: 'rgba(255, 99, 132, 0.5)',
+                borderWidth: 2,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            animation: false,
+            scales: {
+              x: {
+                type: 'linear',
+                position: 'bottom',
+                title: {
+                  display: true,
+                  text: 'Input (x)'
+                }
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: 'Output (y)'
+                }
+              }
+            }
+          }
+        })
+      } catch (error) {
+        console.error('Error initializing chart:', error)
       }
     }
 
-    chartInstance.current = new Chart(ctx, config)
+    initChart()
 
     return () => {
-      if (chartInstance.current) {
-        chartInstance.current.destroy()
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.destroy()
       }
     }
   }, [predictions, dataset])
