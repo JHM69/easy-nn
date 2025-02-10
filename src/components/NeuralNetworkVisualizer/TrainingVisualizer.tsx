@@ -5,6 +5,17 @@ import { Layer, LossType } from '@/types/neural-network'
 import { Value, MLP, createNetwork } from '@/utils/neural-network'
 import TrainingChart from './TrainingChart'
 import NetworkVisualizer from '../NeuralNetwork/NetworkVisualizer'
+import {
+  PlayIcon,
+  PauseIcon,
+  TrackPreviousIcon,
+  TrackNextIcon,
+  ResetIcon,
+  TimerIcon
+} from '@radix-ui/react-icons'
+import { Slider } from '@/components/ui/slider'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 /**
  * AnimationStep is used for the "playback" animation
@@ -17,6 +28,7 @@ interface AnimationStep {
   sampleIndex: number
   predictions: { x: number; y: number; predicted: number }[]
   networkState: MLP // Store entire network state
+  testPredictions?: { x: number; y: number; predicted: number }[] // Add this to AnimationStep interface
 }
 
 /**
@@ -37,6 +49,13 @@ interface PredictionPoint {
   x: number;
   y: number;
   predicted: number;
+}
+
+interface TrainingMetrics {
+  epoch: number;
+  trainLoss: number;
+  validationLoss: number;
+  accuracy: number;
 }
 
 interface TrainingVisualizerProps {
@@ -90,6 +109,9 @@ export default function TrainingVisualizer({
 
   // Initialize predictions state
   const [internalPredictions, setInternalPredictions] = useState<{ x: number; y: number; predicted: number }[]>([])
+  const [testPredictions, setTestPredictions] = useState<{ x: number; y: number; predicted: number }[]>([])
+  const [trainingMetrics, setTrainingMetrics] = useState<TrainingMetrics[]>([]);
+  const [decisionBoundary, setDecisionBoundary] = useState<Array<{x: number; y: number; value: number}>>([]);
 
   // --------------------------------------------------------------------------
   //  Initialization
@@ -204,87 +226,107 @@ export default function TrainingVisualizer({
   // --------------------------------------------------------------------------
   //  Full Training
   // --------------------------------------------------------------------------
-  const startTraining = async () => {
-    if (!trainData.length || isTraining || !network) {
-      console.log('Training prerequisites not met:', {
-        hasTrainData: trainData.length > 0,
-        isTraining,
-        hasNetwork: !!network
-      });
-      return;
+  // Add function-specific training configuration
+  const getFunctionConfig = (functionType: string) => {
+    switch (functionType) {
+      case 'linear':
+        return { learningRate: 0.01, epochs: 100 };
+      case 'quadratic':
+        return { learningRate: 0.01, epochs: 200 };
+      case 'sine':
+        return { learningRate: 0.005, epochs: 300 };
+      case 'sigmoid':
+        return { learningRate: 0.01, epochs: 200 };
+      case 'cubic':
+        return { learningRate: 0.001, epochs: 400 };
+      default:
+        return { learningRate: 0.01, epochs: 200 };
     }
+  };
 
-    console.log('Network configuration:', {
-      inputSize: layers[0].neurons,
-      outputSize: layers[layers.length - 1].neurons
-    });
-
+  // Modify startTraining to use function-specific configurations
+  const startTraining = async () => {
+    if (!trainData.length || isTraining || !network) return;
+    
+    // Detect function type from data pattern
+    const functionType = detectFunctionType(trainData);
+    const config = getFunctionConfig(functionType);
+    
+    setLearningRate(config.learningRate);
+    setEpochs(config.epochs);
+    
     setIsTraining(true);
     setLossHistory([]);
-
+    setTrainingMetrics([]);
+    
     try {
       for (let epoch = 0; epoch < epochs; epoch++) {
         let epochLoss = 0;
-        setCurrentEpoch(epoch);
-
-        for (let i = 0; i < trainData.length; i++) {
-          const sample = trainData[i];
+        
+        // Shuffle training data
+        const shuffledData = [...trainData]
+          .sort(() => Math.random() - 0.5);
+        
+        // Training loop
+        for (let i = 0; i < shuffledData.length; i++) {
+          const sample = shuffledData[i];
           
-          // Create input array with single value for x
-          const input = [new Value(sample.x)]; // Changed from array destructuring to single-element array
-          console.log('Forward pass:', { sampleIndex: i, inputSize: input.length });
-          
+          // Forward pass with proper input wrapping
+          const input = [new Value(sample.x)];
           const output = network.forward(input);
           const prediction = Array.isArray(output) ? output[0] : output;
           
           // Calculate loss
           const target = new Value(sample.y);
-          const loss = prediction.add(target.mul(-1)).mul(prediction.add(target.mul(-1)));
+          const loss = prediction.add(target.mul(-1)).pow(2);
           epochLoss += loss.data;
 
-          // Debug current state
-          console.log('Sample results:', {
-            input: sample.x,
-            target: sample.y,
-            predicted: prediction.data,
-            loss: loss.data
-          });
-
-          // Backward pass
+          // Backward pass and parameter update
           network.zeroGrad();
           loss.backward();
-
-          // Update parameters
+          
           for (const param of network.parameters()) {
             param.data -= learningRate * param.grad;
           }
-
-          // Update UI with current predictions
-          const currentPredictions = getCurrentPredictions(network, trainData);
-          setCurrentPredictions(currentPredictions);
-          setInternalPredictions(currentPredictions);
-          
-          // Record step
-          const step: AnimationStep = {
-            activations: network.getActivations(),
-            loss: loss.data,
-            epoch,
-            sampleIndex: i,
-            predictions: currentPreds,
-            networkState: network.clone()
-          };
-          
-          setAnimationSteps(prev => [...prev, step]);
-          setTotalLoss(epochLoss / (i + 1));
-
-          // Add delay for visualization
-          await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        // Update loss history after each epoch
-        const avgEpochLoss = epochLoss / trainData.length;
-        setLossHistory(prev => [...prev, avgEpochLoss]);
-        console.log(`Epoch ${epoch + 1} completed. Average loss: ${avgEpochLoss}`);
+        // Update metrics and UI
+        const avgLoss = epochLoss / trainData.length;
+        const currentPreds = getCurrentPredictions(network, trainData);
+        const validationLoss = calculateValidationLoss(network, testData);
+        const accuracy = calculateAccuracy(currentPreds);
+
+        // Update predictions state
+        setCurrentPredictions(currentPreds);
+        setInternalPredictions(currentPreds);
+        
+        // Update metrics
+        const metric: TrainingMetrics = {
+          epoch,
+          trainLoss: avgLoss,
+          validationLoss,
+          accuracy
+        };
+        setTrainingMetrics(prev => [...prev, metric]);
+
+        // Update animation steps with current network state
+        const step: AnimationStep = {
+          activations: network.getActivations(),
+          loss: avgLoss,
+          epoch,
+          sampleIndex: trainData.length - 1,
+          predictions: currentPreds,
+          networkState: network.clone(),
+          testPredictions: getTestPredictions(network, testData)
+        };
+        
+        setAnimationSteps(prev => [...prev, step]);
+        setCurrentEpoch(epoch);
+        setTotalLoss(avgLoss);
+        setLossHistory(prev => [...prev, avgLoss]);
+
+        // Add small delay for visualization
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
     } catch (error) {
       console.error('Training error:', error);
@@ -293,6 +335,47 @@ export default function TrainingVisualizer({
     }
   };
 
+  // Helper function to detect function type from data
+  const detectFunctionType = (data: Array<{x: number; y: number}>) => {
+    // Simple heuristic based on data patterns
+    // This could be made more sophisticated
+    const samples = data.slice(0, 10);
+    let isLinear = true;
+    let isQuadratic = true;
+    
+    for (let i = 1; i < samples.length - 1; i++) {
+      const dy1 = samples[i].y - samples[i-1].y;
+      const dy2 = samples[i+1].y - samples[i].y;
+      
+      if (Math.abs(dy1 - dy2) > 0.1) isLinear = false;
+      if (Math.abs(dy1/dy2 - 1) > 0.1) isQuadratic = false;
+    }
+    
+    if (isLinear) return 'linear';
+    if (isQuadratic) return 'quadratic';
+    return 'complex'; // Default for other functions
+  };
+
+  // Helper functions for metrics
+  const calculateValidationLoss = (network: MLP, testData: Array<{x: number; y: number}>) => {
+    let validationLoss = 0;
+    for (const sample of testData) {
+      const input = [new Value(sample.x)];
+      const output = network.forward(input);
+      const prediction = Array.isArray(output) ? output[0] : output;
+      const target = new Value(sample.y);
+      const loss = prediction.add(target.mul(-1)).mul(prediction.add(target.mul(-1)));
+      validationLoss += loss.data;
+    }
+    return validationLoss / testData.length;
+  };
+
+  const calculateAccuracy = (predictions: Array<{x: number; y: number; predicted: number}>) => {
+    const threshold = 0.1; // Adjust based on your problem
+    const correct = predictions.filter(p => Math.abs(p.predicted - p.y) < threshold).length;
+    return correct / predictions.length;
+  };
+ 
   // --------------------------------------------------------------------------
   //  Step-by-Step Training
   // --------------------------------------------------------------------------
@@ -379,14 +462,32 @@ export default function TrainingVisualizer({
 
   // Helper function to get current predictions
   const getCurrentPredictions = (net: MLP, data: { x: number; y: number }[]) => {
-      const networkPredictions = data.map(point => {
+    // Generate predictions for a range of x values to create a smooth curve
+    const xMin = Math.min(...data.map(d => d.x));
+    const xMax = Math.max(...data.map(d => d.x));
+    const step = (xMax - xMin) / 50; // 50 points for smooth curve
+    
+    const predictions: Array<{x: number; y: number; predicted: number}> = [];
+    
+    // Add predictions for the actual data points
+    for (let x = xMin; x <= xMax; x += step) {
+      const input = new Value(x);
+      const output = net.forward([input]);
+      const predicted = Array.isArray(output) ? output[0].data : output.data;
+      predictions.push({ x, y: 0, predicted });
+    }
+    
+    return predictions;
+  }
+
+  // Helper function to get test predictions
+  const getTestPredictions = (net: MLP, testData: { x: number; y: number }[]) => {
+    return testData.map(point => {
       const input = new Value(point.x)
       const output = net.forward([input])
       const predicted = Array.isArray(output) ? output[0].data : output.data
       return { x: point.x, y: point.y, predicted }
     })
-    setInternalPredictions(predictions)
-    return predictions
   }
 
   // --------------------------------------------------------------------------
@@ -422,7 +523,7 @@ export default function TrainingVisualizer({
   //  UI
   // --------------------------------------------------------------------------
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 bg-white dark:bg-gray-900 rounded-xl p-6 shadow-lg">
       <h3 className="text-lg font-semibold">Training Visualization</h3>
 
       {/* Training parameters */}
@@ -436,18 +537,18 @@ export default function TrainingVisualizer({
             min="0.0001"
             max="1"
             step="0.001"
-            className="w-full px-3 py-2 border rounded-md"
+            className="w-full px-3 py-2 border dark:border-gray-950 rounded-md"
           />
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium">Epochs:</label>
+          <label className="block  text-sm font-medium">Epochs:</label>
           <input
             type="number"
             value={epochs}
             onChange={(e) => setEpochs(Math.max(1, parseInt(e.target.value) || 1))}
             min="1"
-            className="w-full px-3 py-2 border rounded-md"
+            className="w-full px-3 py-2 border dark:border-gray-950 rounded-md"
           />
         </div>
 
@@ -455,7 +556,7 @@ export default function TrainingVisualizer({
           <button
             onClick={startTraining}
             disabled={isTraining || !trainData.length}
-            className="w-full px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-400"
+            className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-600"
           >
             {isTraining ? 'Training...' : 'Start Training'}
           </button>
@@ -463,44 +564,113 @@ export default function TrainingVisualizer({
       </div>
 
       {/* Training progress info */}
-      {isTraining && (
-        <div className="space-y-2 p-4 bg-blue-50 rounded-md">
-          <p>Training Progress:</p>
-          <p>Epoch: {currentEpoch + 1}/{epochs}</p>
-          <p>Average Loss: {totalLoss.toFixed(4)}</p>
-        </div>
-      )}
+        {isTraining && (
+          <div className="p-4 bg-blue-50/10 dark:bg-gray-800/50 border border-blue-200/20 dark:border-gray-700 rounded-lg shadow-sm">
+            <h4 className="text-lg font-semibold text-blue-800 dark:text-blue-300 mb-3">Training Progress</h4>
+            <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white dark:bg-gray-900 p-3 rounded-md shadow-sm border border-gray-100 dark:border-gray-800">
+            <div className="text-sm text-gray-600 dark:text-gray-400">Epoch</div>
+            <div className="text-xl font-medium dark:text-gray-200">{currentEpoch + 1}/{epochs}</div>
+          </div>
+          <div className="bg-white dark:bg-gray-900 p-3 rounded-md shadow-sm border border-gray-100 dark:border-gray-800">
+            <div className="text-sm text-gray-600 dark:text-gray-400">Average Loss</div>
+            <div className="text-xl font-medium dark:text-gray-200">{totalLoss.toFixed(4)}</div>
+          </div>
+            </div>
+          </div>
+        )}
 
-      {/* Animation controls (only show if we have steps) */}
+        {/* Animation controls */}
       {animationSteps.length > 0 && (
-        <div className="flex gap-2 items-center">
-          <button onClick={stepBackward} className="px-3 py-1 bg-gray-200 rounded">
-            ⏮️
-          </button>
-          <button onClick={isPlaying ? pauseAnimation : playAnimation} className="px-3 py-1 bg-gray-200 rounded">
-            {isPlaying ? '⏸️' : '▶️'}
-          </button>
-          <button onClick={stepForward} className="px-3 py-1 bg-gray-200 rounded">
-            ⏭️
-          </button>
-          <button onClick={resetAnimation} className="px-3 py-1 bg-gray-200 rounded">
-            🔄
-          </button>
-          <input
-            type="range"
-            min="100"
-            max="2000"
-            value={playbackSpeed}
-            onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
-            className="w-32"
-          />
-          <span className="text-sm">Speed: {playbackSpeed}ms</span>
+        <div className="px-6 py-4 rounded-xl border dark:border-gray-700 bg-card text-card-foreground shadow-sm space-y-4  ">
+          <div className="flex items-center justify-between">
+            <h4 className="text-lg font-semibold">Playback Controls</h4>
+            <div className="flex items-center gap-2">
+              <TimerIcon className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                Step {currentStepIndex + 1} of {animationSteps.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4 ml-28">
+            <div className="flex items-center justify-center gap-2">
+               
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={stepBackward}
+                disabled={currentStepIndex === 0}
+                className="h-9 w-9 rounded-full transition-all hover:scale-110"
+              >
+                <TrackPreviousIcon className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="default"
+                size="icon"
+                onClick={isPlaying ? pauseAnimation : playAnimation}
+                className={cn(
+                  "h-12 w-12 rounded-full transition-all hover:scale-110",
+                  isPlaying ? "bg-red-500 hover:bg-red-600" : "bg-green-600 hover:bg-green-700"
+                )}
+              >
+                {isPlaying ? (
+                  <PauseIcon className="h-5 w-5" />
+                ) : (
+                  <PlayIcon className="h-5 w-5" />
+                )}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={stepForward}
+                disabled={currentStepIndex === animationSteps.length - 1}
+                className="h-9 w-9 rounded-full transition-all hover:scale-110"
+              >
+                <TrackNextIcon className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={resetAnimation}
+                className="h-9 w-9 rounded-full transition-all hover:scale-110"
+              >
+                <ResetIcon className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* <div className="flex items-center gap-4 px-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                Slow
+              </span>
+              <Slider
+                value={[playbackSpeed]}
+                min={100}
+                max={2000}
+                step={100}
+                onValueChange={(value) => setPlaybackSpeed(value[0])}
+                className="flex-1"
+              />
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                Fast
+              </span>
+            </div>
+
+            <div className="flex justify-center">
+              <div className="px-3 py-1 rounded-full bg-muted text-xs text-muted-foreground">
+                {playbackSpeed}ms per step
+              </div>
+            </div> */}
+          </div>
         </div>
       )}
 
-      {/* Main Visualization + Chart */}
-      <div className=" gap-4">
-        <div className="border rounded-lg  p-4">
+      {/* Network Visualizer */}
+      <div className="gap-4">
+        <div  >
           {network && (
             <NetworkVisualizer
               layers={layers}
@@ -514,60 +684,19 @@ export default function TrainingVisualizer({
             />
           )}
         </div>
-       
       </div>
-
-      {/* Step Mode Controls */}
-      <div className="flex gap-4 mb-4">
-        <button
-          onClick={() => setStepMode(!stepMode)}
-          className={`px-4 py-2 rounded-md ${
-            stepMode ? 'bg-green-500' : 'bg-gray-500'
-          } text-white`}
-        >
-          {stepMode ? 'Step Mode Active' : 'Enable Step Mode'}
-        </button>
-
-        {stepMode ? (
-          <button
-            onClick={performSingleStep}
-            className="px-4 py-2 bg-blue-500 text-white rounded-md"
-          >
-            Next Step ({stepPhase === 'forward' ? 'Forward Pass' : 'Backward Pass'})
-          </button>
-        ) : (
-          <button
-            onClick={startTraining}
-            disabled={isTraining}
-            className="px-4 py-2 bg-blue-500 text-white rounded-md disabled:bg-gray-400"
-          >
-            {isTraining ? 'Training...' : 'Start Training'}
-          </button>
-        )}
-      </div>
-
-
+ 
+      {/* Training Chart */}
       <TrainingChart
-          predictions={displayPredictions.length > 0 ? displayPredictions : internalPredictions}
-          dataset={dataset || []}
-          loss={loss || []}
-        />
+        predictions={displayPredictions.length > 0 ? displayPredictions : internalPredictions}
+        testPredictions={testPredictions}
+        dataset={dataset || []}
+        loss={loss || []}
+        trainingMetrics={trainingMetrics}
+        decisionBoundary={decisionBoundary}
+        isTraining={isTraining} lossFunction={'mse'}      />
 
-      {/* Current step details */}
-      {currentStep && (
-        <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg">
-          <h4 className="font-medium mb-2">Current Step Details</h4>
-          <p>Type: {currentStep?.type === 'forward' ? 'Forward Pass' : 'Backward Pass'}</p>
-          <p>Sample: {currentStep?.sampleIndex !== undefined ? currentStep.sampleIndex + 1 : 0}/{trainData.length}</p>
-          <p>Loss: {isNumeric(currentStep?.loss) ? currentStep.loss.toFixed(4) : 'N/A'}</p>
-          {currentStep?.prediction !== undefined && (
-            <>
-              <p>Prediction: {isNumeric(currentStep.prediction) ? currentStep.prediction.toFixed(4) : 'N/A'}</p>
-              <p>Actual: {isNumeric(currentStep.actual) ? currentStep.actual.toFixed(4) : 'N/A'}</p>
-            </>
-          )}
-        </div>
-      )}
+    
     </div>
   )
 }

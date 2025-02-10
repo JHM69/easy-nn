@@ -20,13 +20,14 @@ export default function NetworkVisualizer({
   activations: rawActivations,
   weights: rawWeights,
   biases: rawBiases,
-  activeLayer,
-  phase
+  activeLayer, 
 }: NetworkVisualizerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
 
   // Update dimensions when container size changes
   useEffect(() => {
@@ -52,6 +53,51 @@ export default function NetworkVisualizer({
   const handleReset = () => {
     setZoom(1)
     setPan({ x: 0, y: 0 })
+  }
+
+  // Mouse event handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true)
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return
+    setPan({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    })
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey) {
+      e.preventDefault()
+      const delta = -e.deltaY
+      const zoomFactor = 1.1
+      const newZoom = delta > 0 
+        ? Math.min(zoom * zoomFactor, 3) 
+        : Math.max(zoom / zoomFactor, 0.5)
+
+      // Calculate mouse position relative to container
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      // Calculate new pan position to zoom towards mouse
+      const newPan = {
+        x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
+        y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
+      }
+
+      setZoom(newZoom)
+      setPan(newPan)
+    }
   }
 
   // Update the layout parameters
@@ -96,9 +142,20 @@ export default function NetworkVisualizer({
 
   // Helper to safely get bias value
   const getBiasValue = (layerIndex: number, neuronIndex: number): Value => {
-    const index = getBiasIndex(layerIndex, neuronIndex, layers)
-    const bias = biases[index]
-    return bias instanceof Value ? bias : new Value(typeof bias === 'number' ? bias : 0)
+    // Skip bias for input layer
+    if (layerIndex === 0) return new Value(0);
+    
+    // Calculate the index in the weights array where biases start for this layer
+    let weightCount = 0;
+    for (let i = 0; i < layerIndex; i++) {
+      weightCount += layers[i].neurons * layers[i + 1].neurons;
+    }
+    
+    // Calculate bias index
+    const biasStartIndex = weightCount + (layers[layerIndex].neurons * layers[layerIndex + 1]?.neurons || 0);
+    const biasIndex = biasStartIndex + neuronIndex;
+    
+    return weights[biasIndex] || new Value(0);
   }
 
   // Constants for neuron dimensions
@@ -157,6 +214,12 @@ export default function NetworkVisualizer({
       <div 
         ref={containerRef} 
         className="relative overflow-hidden w-full h-[500px]"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
       >
         {/* SVG Layer for Connections */}
         <svg 

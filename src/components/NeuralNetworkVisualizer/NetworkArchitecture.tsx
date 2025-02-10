@@ -87,8 +87,8 @@ export default function NetworkArchitecture({
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
+      <div className="space-y-4 bg-white dark:bg-gray-900 rounded-xl p-6 shadow-lg"> {/* reduced from space-y-6 */}
+        <div className="flex justify-between items-center mb-4"> {/* reduced from mb-6 */}
           <div>
             <h3 className="text-lg font-semibold">Network Architecture</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">Configure your neural network layers</p>
@@ -99,7 +99,7 @@ export default function NetworkArchitecture({
                 const preset = presets[parseInt(e.target.value)]
                 onLayersChange(preset.layers)
               }}
-              className="px-3 py-1.5 border rounded-md text-sm dark:bg-gray-800"
+              className="px-3 py-1.5 border rounded-md text-sm dark:bg-gray-800 dark:border-gray-700"
             >
               <option value="">Load Preset</option>
               {presets.map((preset, i) => (
@@ -117,90 +117,135 @@ export default function NetworkArchitecture({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {layers.map((layer, index) => (
-            <div 
-              key={index} 
-              className={`p-4 border rounded-lg shadow-sm transition-all relative
-                ${layer.type === 'input' ? 'bg-green-50 dark:bg-green-900/20' : 
-                  layer.type === 'output' ? 'bg-blue-50 dark:bg-blue-900/20' : 
-                  'bg-white dark:bg-gray-800'}`}
-            >
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <Tooltip content={getLayerTypeDescription(layer.type)}>
-                    <p className="text-sm font-medium capitalize">
-                      {layer.type} Layer {index + 1}
-                    </p>
-                  </Tooltip>
-                  {layer.type === 'hidden' && layers.length > 3 && (
-                    <button
-                      onClick={() => removeLayer(index)}
-                      className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-500 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                      title="Remove Layer"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Tooltip content={getNeuronsHint(layer.type, index, layers.length)}>
-                    <div>
-                      <label className="block text-xs text-gray-600 dark:text-gray-400">Neurons</label>
-                      <input
-                        type="number"
-                        value={layer.neurons}
-                        onChange={(e) => {
-                          const value = Math.max(1, Math.min(32, parseInt(e.target.value) || 1))
-                          updateLayer(index, { neurons: value })
-                        }}
-                        min="1"
-                        max="32"
-                        className="w-24 px-2 py-1 border rounded text-sm dark:bg-gray-700 focus:ring-2 focus:ring-blue-500"
-                        disabled={layer.type === 'input' || layer.type === 'output'}
-                      />
+        <div className="relative w-full overflow-x-auto pb-4"> {/* reduced from pb-6 */}
+          <div className="flex items-center gap-2 min-w-max px-2"> {/* reduced gap-4 to gap-2 and px-4 to px-2 */}
+            {layers.map((layer, index) => (
+              <div key={index} className="relative">
+                {/* Connection lines */}
+                {index < layers.length - 1 && (
+                  <div className="absolute left-full top-1/2 w-2 h-0.5 bg-gray-300 dark:bg-gray-600 transform -translate-y-1/2"></div>
+                )}
+                
+                <div className={`w-48 p-3 border rounded-lg shadow-sm transition-all relative
+                  ${layer.type === 'input' ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30' : 
+                    layer.type === 'output' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/30' : 
+                    'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}
+                `}>
+                  <div className="space-y-2"> {/* reduced from space-y-3 */}
+                    <div className="flex justify-between items-center">
+                      <Tooltip content={getLayerTypeDescription(layer.type)}>
+                        <p className="text-sm font-medium capitalize">
+                          {layer.type} Layer {index + 1}
+                        </p>
+                      </Tooltip>
+                      {layer.type === 'hidden' && layers.length > 3 && (
+                        <button
+                          onClick={() => removeLayer(index)}
+                          className="p-1.5 text-gray-400 hover:text-red-500 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
-                  </Tooltip>
-                </div>
 
-                {layer.type === 'hidden' && (
-                  <div className="space-y-2">
-                    <label className="block text-xs text-gray-600 dark:text-gray-400">Activation</label>
+                    <div className="space-y-1.5"> {/* reduced from space-y-2 */}
+                      <Tooltip content={getNeuronsHint(layer.type, index, layers.length)}>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400">Neurons</label>
+                          <input
+                            type="number"
+                            value={layer.neurons}
+                            onChange={(e) => {
+                              const value = Math.max(1, Math.min(32, parseInt(e.target.value) || 1))
+                              updateLayer(index, { neurons: value })
+                            }}
+                            min="1"
+                            max="32"
+                            className="w-full px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500"
+                            disabled={layer.type === 'input' || layer.type === 'output'}
+                          />
+                        </div>
+                      </Tooltip>
+
+                      {/* Neuron visualization */}
+                      <div className="h-16 flex items-center justify-center"> {/* reduced from h-20 */}
+                        <div className="flex flex-col gap-1">
+                          {Array.from({ length: Math.min(layer.neurons, 5) }).map((_, i) => (
+                            <div
+                              key={i}
+                              className={`w-3 h-3 rounded-full ${
+                                layer.type === 'input' ? 'bg-green-400 dark:bg-green-500' :
+                                layer.type === 'output' ? 'bg-blue-400 dark:bg-blue-500' :
+                                'bg-gray-400 dark:bg-gray-500'
+                              }`}
+                            />
+                          ))}
+                          {layer.neurons > 5 && (
+                            <div className="text-xs text-gray-500 text-center mt-1">+{layer.neurons - 5}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {layer.type === 'hidden' && (
+                      <div className="space-y-1.5"> {/* reduced from space-y-2 */}
+                        <label className="block text-xs text-gray-600 dark:text-gray-400">Activation</label>
+                        <select
+                          value={layer.activation || 'relu'}
+                          onChange={(e) => updateLayer(index, { activation: e.target.value as ActivationType })}
+                          className="w-full px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:border-gray-600"
+                        >
+                          {activations.map(act => (
+                            <Tooltip key={act.value} content={act.description}>
+                              <option value={act.value}>{act.value.toUpperCase()}</option>
+                            </Tooltip>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {/* Loss Function Box */}
+            <div className="relative">
+              {/* Connection line to loss function */}
+              <div className="absolute right-full top-1/2 w-2 h-0.5 bg-gray-300 dark:bg-gray-600 transform -translate-y-1/2"></div>
+              
+              <div className="w-48 p-3 border rounded-lg shadow-sm bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/30">
+                <div className="space-y-2"> {/* reduced from space-y-3 */}
+                  <Tooltip content="Loss function measures how well the network performs">
+                    <p className="text-sm font-medium">Loss Function</p>
+                  </Tooltip>
+                  
+                  <div className="space-y-1.5"> {/* reduced from space-y-2 */}
                     <select
-                      value={layer.activation || 'relu'}
-                      onChange={(e) => updateLayer(index, { activation: e.target.value as ActivationType })}
-                      className="w-full px-2 py-1 border rounded text-sm dark:bg-gray-700"
+                      value={lossFunction}
+                      onChange={(e) => onLossFunctionChange(e.target.value as LossType)}
+                      className="w-full px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:border-gray-600"
                     >
-                      {activations.map(act => (
-                        <Tooltip key={act.value} content={act.description}>
-                          <option value={act.value}>{act.value.toUpperCase()}</option>
+                      {lossFunctions.map(loss => (
+                        <Tooltip key={loss.value} content={loss.description}>
+                          <option value={loss.value}>{loss.value.toUpperCase()}</option>
                         </Tooltip>
                       ))}
                     </select>
+
+                    {/* Loss function visualization */}
+                    <div className="h-16 flex items-center justify-center"> {/* reduced from h-20 */}
+                      <div className="text-red-500 dark:text-red-400">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
             </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 border rounded-lg bg-gray-50 dark:bg-gray-800/50">
-            <h4 className="font-medium mb-2">Loss Function</h4>
-            <select
-              value={lossFunction}
-              onChange={(e) => onLossFunctionChange(e.target.value as LossType)}
-              className="w-full px-2 py-1 border rounded text-sm dark:bg-gray-700"
-            >
-              {lossFunctions.map(loss => (
-                <Tooltip key={loss.value} content={loss.description}>
-                  <option value={loss.value}>{loss.value.toUpperCase()}</option>
-                </Tooltip>
-              ))}
-            </select>
           </div>
         </div>
       </div>

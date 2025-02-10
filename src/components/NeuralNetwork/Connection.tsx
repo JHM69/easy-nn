@@ -13,9 +13,19 @@ export default function Connection({
   weight,
   isActive = false
 }: ConnectionProps) {
-  const strokeWidth = Math.max(Math.min(Math.abs(weight.data) * 5, 4), 2.5)
-  const opacity = Math.max(Math.min(Math.abs(weight.data), 3), 0.3)
-  const color = weight.data >= 0 ? '#34D399' : '#F87171'
+  // Ensure weight data is a valid number
+  const weightValue = typeof weight?.data === 'number' && !isNaN(weight.data) 
+    ? weight.data 
+    : 0
+
+  const gradientValue = typeof weight?.grad === 'number' && !isNaN(weight.grad)
+    ? weight.grad
+    : 0
+
+  // Calculate visual properties with validated values
+  const strokeWidth = Math.max(Math.min(Math.abs(weightValue) * 5, 4), 2.5)
+  const opacity = Math.max(Math.min(Math.abs(weightValue), 3), 0.3)
+  const color = weightValue >= 0 ? '#34D399' : '#F87171'
   
   // Calculate midpoint for tooltip positioning
   const midX = (source.x + target.x) / 2
@@ -30,7 +40,7 @@ export default function Connection({
         x2={target.x}
         y2={target.y}
         stroke={color}
-        strokeWidth={strokeWidth}
+        strokeWidth={strokeWidth.toString()}
         opacity={isActive ? opacity * 1.5 : opacity}
         strokeLinecap="round"
       />
@@ -63,7 +73,7 @@ export default function Connection({
             textAnchor="middle"
             y="-25"
           >
-            Weight: {weight.data.toFixed(3)}
+            Weight: {weightValue.toFixed(3)}
           </text>
           <text
             fill="white"
@@ -71,7 +81,7 @@ export default function Connection({
             textAnchor="middle"
             y="-10"
           >
-            Gradient: {weight.grad.toFixed(3)}
+            Gradient: {gradientValue.toFixed(3)}
           </text>
           
           {/* Connection strength indicator */}
@@ -81,9 +91,9 @@ export default function Connection({
             textAnchor="middle"
             y="5"
           >
-            Strength: {Math.abs(weight.data) < 0.001 ? "Very Weak" : 
-                      Math.abs(weight.data) < 0.3 ? "Weak" :
-                      Math.abs(weight.data) < 0.7 ? "Medium" : "Strong"}
+            Strength: {Math.abs(weightValue) < 0.001 ? "Very Weak" : 
+                      Math.abs(weightValue) < 0.3 ? "Weak" :
+                      Math.abs(weightValue) < 0.7 ? "Medium" : "Strong"}
           </text>
         </g>
       </g>

@@ -17,3 +17,13 @@ body {
   background: var(--background);
   transition: color 0.3s ease, background-color 0.3s ease;
 }
+
+/* Prevent default browser zoom behavior when ctrl + wheel */
+@media screen and (max-width: 100vw) {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    touch-action: none;
+  }
+}

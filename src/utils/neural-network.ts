@@ -1,28 +1,30 @@
 import { Layer, ActivationType, LossType } from '@/types/neural-network'
 import { AutoGradValue } from '@/types/neural-network'
 
-export function activate(x: number, type: ActivationType): number {
+export function activate(x: Value | number, type: ActivationType): number {
+  const value = x instanceof Value ? x.data : x;
   switch (type) {
     case 'relu':
-      return Math.max(0, x)
+      return Math.max(0, value)
     case 'sigmoid':
-      return 1 / (1 + Math.exp(-x))
+      return 1 / (1 + Math.exp(-value))
     case 'tanh':
-      return Math.tanh(x)
+      return Math.tanh(value)
     default:
-      return x
+      return value
   }
 }
 
-export function activateDerivative(x: number, type: ActivationType): number {
+export function activateDerivative(x: Value | number, type: ActivationType): number {
+  const value = x instanceof Value ? x.data : x;
   switch (type) {
     case 'relu':
-      return x > 0 ? 1 : 0
+      return value > 0 ? 1 : 0
     case 'sigmoid':
-      const s = activate(x, 'sigmoid')
+      const s = activate(value, 'sigmoid')
       return s * (1 - s)
     case 'tanh':
-      const t = Math.tanh(x)
+      const t = Math.tanh(value)
       return 1 - t * t
     default:
       return 1
@@ -51,6 +53,49 @@ export class Value implements AutoGradValue {
     out._backward = () => {
       this.grad += 1.0 * out.grad
       otherValue.grad += 1.0 * out.grad
+    }
+    return out
+  }
+
+  sub(other: Value | number): Value {
+    const otherValue = other instanceof Value ? other : new Value(other)
+    const out = new Value(this.data - otherValue.data, [this, otherValue], '-')
+    
+    out._backward = () => {
+      this.grad += 1.0 * out.grad
+      otherValue.grad += -1.0 * out.grad
+    }
+    return out
+  }
+
+  div(other: Value | number): Value {
+    const otherValue = other instanceof Value ? other : new Value(other)
+    const out = new Value(this.data / otherValue.data, [this, otherValue], '/')
+    
+    out._backward = () => {
+      this.grad += (1.0 / otherValue.data) * out.grad
+      otherValue.grad += (-this.data / (otherValue.data * otherValue.data)) * out.grad
+    }
+    return out
+  }
+
+  pow(exponent: number): Value {
+    const out = new Value(Math.pow(this.data, exponent), [this], `^${exponent}`)
+    
+    out._backward = () => {
+      this.grad += (exponent * Math.pow(this.data, exponent - 1)) * out.grad
+    }
+    return out
+  }
+
+  log(): Value {
+    if (this.data <= 0) {
+      throw new Error('Cannot compute log of non-positive number')
+    }
+    const out = new Value(Math.log(this.data), [this], 'log')
+    
+    out._backward = () => {
+      this.grad += (1.0 / this.data) * out.grad
     }
     return out
   }
@@ -97,6 +142,33 @@ export class Value implements AutoGradValue {
     return out
   }
 
+  exp(): Value {
+    const out = new Value(Math.exp(this.data), [this], 'exp')
+    
+    out._backward = () => {
+      this.grad += out.data * out.grad // derivative of exp(x) is exp(x)
+    }
+    return out
+  }
+  
+  sin(): Value {
+    const out = new Value(Math.sin(this.data), [this], 'sin')
+    
+    out._backward = () => {
+      this.grad += Math.cos(this.data) * out.grad // derivative of sin(x) is cos(x)
+    }
+    return out
+  }
+  
+  cos(): Value {
+    const out = new Value(Math.cos(this.data), [this], 'cos')
+    
+    out._backward = () => {
+      this.grad += -Math.sin(this.data) * out.grad // derivative of cos(x) is -sin(x)
+    }
+    return out
+  }
+
   backward(): void {
     const topo: AutoGradValue[] = []
     const visited = new Set<AutoGradValue>()
@@ -139,13 +211,15 @@ export class Neuron extends Module {
   w: Value[];
   b: Value;
   nonlin: boolean;
+  activation: ActivationType;
 
-  constructor(nin: number, nonlin = true) {
+  constructor(nin: number, activation: ActivationType = 'relu', nonlin = true) {
     super();
     // Initialize with small random weights and zero bias
     this.w = Array(nin).fill(0).map(() => new Value(Math.random() * 0.1 - 0.05));
     this.b = new Value(0);
     this.nonlin = nonlin;
+    this.activation = activation;
   }
 
   forward(x: Value[]): Value {
@@ -159,7 +233,19 @@ export class Neuron extends Module {
     for (let i = 0; i < this.w.length; i++) {
       act = act.add(this.w[i].mul(x[i]));
     }
-    return this.nonlin ? act.relu() : act;
+    
+    if (!this.nonlin) return act;
+    
+    switch (this.activation) {
+      case 'relu':
+        return act.relu();
+      case 'sigmoid':
+        return act.sigmoid();
+      case 'tanh':
+        return act.tanh();
+      default:
+        return act;
+    }
   }
 
   parameters(): Value[] {
@@ -170,9 +256,9 @@ export class Neuron extends Module {
 export class NeuronLayer extends Module {
   neurons: Neuron[];
 
-  constructor(nin: number, nout: number, nonlin = true) {
+  constructor(nin: number, nout: number, activation: ActivationType = 'relu', nonlin = true) {
     super();
-    this.neurons = Array(nout).fill(0).map(() => new Neuron(nin, nonlin));
+    this.neurons = Array(nout).fill(0).map(() => new Neuron(nin, activation, nonlin));
   }
 
   forward(x: Value[]): Value[] {
@@ -190,7 +276,7 @@ export class MLP extends Module {
   inputSize: number;
   layerSizes: number[];
 
-  constructor(nin: number, nouts: number[]) {
+  constructor(nin: number, nouts: number[], activations: ActivationType[] = []) {
     super();
     const sizes = [nin, ...nouts];
     this.layers = [];
@@ -199,10 +285,13 @@ export class MLP extends Module {
     this.inputLayer = null;
 
     for (let i = 0; i < nouts.length; i++) {
+      const activation = activations[i] || 'relu';
+      const isLastLayer = i === nouts.length - 1;
       this.layers.push(new NeuronLayer(
         sizes[i],
         sizes[i + 1],
-        i !== nouts.length - 1 // nonlin for all except last layer
+        activation,
+        !isLastLayer // nonlin for all except last layer
       ));
     }
   }
@@ -248,7 +337,6 @@ export class MLP extends Module {
 
   clone(): MLP {
     const newMLP = new MLP(this.inputSize, this.layerSizes)
-    // Copy parameters
     const sourceParams = this.parameters()
     const targetParams = newMLP.parameters()
     
@@ -258,6 +346,17 @@ export class MLP extends Module {
     }
     
     return newMLP
+  }
+
+  static forRegression(hiddenSizes: number[] = [16, 8]): MLP {
+    // Network specifically designed for function approximation
+    // Input size is 1 (x value)
+    // Output size is 1 (y value)
+    return new MLP(1, [...hiddenSizes, 1], [
+      'relu',
+      'relu',
+      'linear' // last layer should be linear for regression
+    ]);
   }
 }
 
@@ -312,3 +411,77 @@ export function calculateLoss(predicted: Value, target: number, type: LossType):
 }
 
 // Remove old backpropagate function as it's handled by Value class now
+
+// Add preset configurations for specific functions
+export const functionPresets = {
+  linear: {
+    name: 'Linear (y = 2x + 1)',
+    network: () => MLP.forRegression([4]),
+    learningRate: 0.01,
+    epochs: 100
+  },
+  quadratic: {
+    name: 'Quadratic (y = x²)',
+    network: () => MLP.forRegression([8, 4]),
+    learningRate: 0.01,
+    epochs: 200
+  },
+  sine: {
+    name: 'Sine (y = sin(x))',
+    network: () => MLP.forRegression([16, 8]),
+    learningRate: 0.005,
+    epochs: 300
+  },
+  sigmoid: {
+    name: 'Sigmoid (y = 1/(1+e^(-x)))',
+    network: () => MLP.forRegression([8, 4]),
+    learningRate: 0.01,
+    epochs: 200
+  },
+  cubic: {
+    name: 'Cubic (y = x³ - 2x)',
+    network: () => MLP.forRegression([16, 8]),
+    learningRate: 0.001,
+    epochs: 400
+  }
+};
+
+// Helper function to generate training data for different functions
+export function generateFunctionData(
+  func: string,
+  numPoints: number = 100,
+  xMin: number = -5,
+  xMax: number = 5
+): { x: number; y: number }[] {
+  const data: { x: number; y: number }[] = [];
+  const step = (xMax - xMin) / (numPoints - 1);
+
+  for (let i = 0; i < numPoints; i++) {
+    const x = xMin + step * i;
+    let y: number;
+
+    switch (func) {
+      case 'linear':
+        y = 2 * x + 1;
+        break;
+      case 'quadratic':
+        y = x * x;
+        break;
+      case 'sine':
+        y = Math.sin(x);
+        break;
+      case 'sigmoid':
+        y = 1 / (1 + Math.exp(-x));
+        break;
+      case 'cubic':
+        y = Math.pow(x, 3) - 2 * x;
+        break;
+      default:
+        y = x; // Default to identity function
+    }
+
+    data.push({ x, y });
+  }
+
+  return data;
+}
