@@ -29,6 +29,13 @@ interface AnimationStep {
   predictions: { x: number; y: number; predicted: number }[]
   networkState: MLP // Store entire network state
   testPredictions?: { x: number; y: number; predicted: number }[] // Add this to AnimationStep interface
+  animationType: 'forward' | 'backward'  // Add this field
+  gradients?: number[][]  // Add this to store gradients for backward pass
+  gradientUpdates?: {
+    weights: { from: number; to: number; value: number }[];
+    biases: { neuron: number; value: number }[];
+    parameterUpdates: { param: string; oldValue: number; newValue: number; delta: number }[];
+  };
 }
 
 /**
@@ -112,6 +119,8 @@ export default function TrainingVisualizer({
   const [testPredictions, setTestPredictions] = useState<{ x: number; y: number; predicted: number }[]>([])
   const [trainingMetrics, setTrainingMetrics] = useState<TrainingMetrics[]>([]);
   const [decisionBoundary, setDecisionBoundary] = useState<Array<{x: number; y: number; value: number}>>([]);
+  const [animationDirection, setAnimationDirection] = useState<'forward' | 'backward'>('forward')
+  const [currentPhase, setCurrentPhase] = useState<'forward' | 'backward'>('forward')
 
   // --------------------------------------------------------------------------
   //  Initialization
@@ -143,7 +152,8 @@ export default function TrainingVisualizer({
         epoch: 0,
         sampleIndex: 0,
         predictions: [],
-        networkState: newNetwork
+        networkState: newNetwork,
+        animationType: 'forward'
       }])
 
       setIsLoading(false)
@@ -159,17 +169,15 @@ export default function TrainingVisualizer({
       trainData
     })
   }, [layers, trainData])
-
-  // Remove canvas-related functions (drawNeuron, drawConnection, etc.)
-
+ 
   // --------------------------------------------------------------------------
   //  Animation Controls
   // --------------------------------------------------------------------------
   const playAnimation = () => {
+    setIsPlaying(true);
     if (currentStepIndex >= animationSteps.length - 1) {
-      setCurrentStepIndex(0)
+      setCurrentStepIndex(0);
     }
-    setIsPlaying(true)
   }
 
   const pauseAnimation = () => {
@@ -183,7 +191,20 @@ export default function TrainingVisualizer({
 
   const stepForward = () => {
     if (currentStepIndex < animationSteps.length - 1) {
-      setCurrentStepIndex(prev => prev + 1)
+      const nextStep = animationSteps[currentStepIndex + 1];
+      if (nextStep.animationType === animationDirection) {
+        setCurrentStepIndex(prev => prev + 1);
+      } else {
+        // Skip to next step with matching direction
+        let newIndex = currentStepIndex + 1;
+        while (newIndex < animationSteps.length && 
+               animationSteps[newIndex].animationType !== animationDirection) {
+          newIndex++;
+        }
+        if (newIndex < animationSteps.length) {
+          setCurrentStepIndex(newIndex);
+        }
+      }
     }
   }
 
@@ -193,35 +214,64 @@ export default function TrainingVisualizer({
     }
   }
 
+  const toggleDirection = () => {
+    setAnimationDirection(prev => prev === 'forward' ? 'backward' : 'forward');
+  };
+
   // Handle auto-play
   useEffect(() => {
     if (!isPlaying) return
-    if (currentStepIndex >= animationSteps.length - 1) {
-      setIsPlaying(false)
-      return
-    }
-
+    
     const timeoutId = setTimeout(() => {
-      setCurrentStepIndex(prev => prev + 1)
-    }, playbackSpeed)
+      const nextIndex = currentStepIndex + 1;
+      if (nextIndex >= animationSteps.length) {
+        setIsPlaying(false);
+        return;
+      }
 
-    return () => clearTimeout(timeoutId)
-  }, [isPlaying, currentStepIndex, animationSteps, playbackSpeed])
+      setCurrentStepIndex(nextIndex);
+      
+    }, playbackSpeed);
+
+    return () => clearTimeout(timeoutId);
+  }, [isPlaying, currentStepIndex, animationSteps.length, playbackSpeed])
 
   // Whenever currentStepIndex changes, redraw
   useEffect(() => {
-    if (!animationSteps[currentStepIndex]) return
+    if (!animationSteps[currentStepIndex] || !trainData || trainData.length === 0) return;
 
-    const stepData = animationSteps[currentStepIndex]
-    // We'll just show the forward pass view
-    setCurrentStep({
-      type: 'forward',
-      activations: stepData.activations,
-      loss: stepData.loss,
-      sampleIndex: stepData.sampleIndex,
-      networkState: stepData.networkState
-    } as VisualizerTrainingStep)
-  }, [currentStepIndex, animationSteps])
+    const stepData = animationSteps[currentStepIndex];
+    if (!stepData) return;
+
+    // Safely get current sample index
+    const sampleIndex = stepData.sampleIndex % trainData.length;
+    const currentSample = trainData[sampleIndex];
+    
+    if (!currentSample) {
+      console.error('Invalid sample index:', sampleIndex);
+      return;
+    }
+
+    try {
+      // Create new input activation with current sample
+      const inputActivations = stepData.activations.map((layerAct, layerIndex) => 
+        layerIndex === 0 ? [new Value(currentSample.x)] : layerAct
+      );
+
+      setCurrentStep({
+        type: stepData.animationType || 'forward',
+        activations: inputActivations,
+        loss: stepData.loss,
+        sampleIndex: stepData.sampleIndex,
+        networkState: stepData.networkState
+      } as VisualizerTrainingStep);
+      
+      // Update current phase for visualization
+      setCurrentPhase(stepData.animationType || 'forward');
+    } catch (error) {
+      console.error('Error updating visualization:', error);
+    }
+  }, [currentStepIndex, animationSteps, trainData])
 
   // --------------------------------------------------------------------------
   //  Full Training
@@ -246,19 +296,20 @@ export default function TrainingVisualizer({
 
   // Modify startTraining to use function-specific configurations
   const startTraining = async () => {
-    if (!trainData.length || isTraining || !network) return;
-    
+    if (!network || !trainData.length || isTraining) return;
+
     // Detect function type from data pattern
     const functionType = detectFunctionType(trainData);
     const config = getFunctionConfig(functionType);
     
     setLearningRate(config.learningRate);
     setEpochs(config.epochs);
-    
+
     setIsTraining(true);
     setLossHistory([]);
     setTrainingMetrics([]);
-    
+    setAnimationSteps([]);  // Clear previous steps
+
     try {
       for (let epoch = 0; epoch < epochs; epoch++) {
         let epochLoss = 0;
@@ -266,11 +317,11 @@ export default function TrainingVisualizer({
         // Shuffle training data
         const shuffledData = [...trainData]
           .sort(() => Math.random() - 0.5);
-        
+
         // Training loop
         for (let i = 0; i < shuffledData.length; i++) {
           const sample = shuffledData[i];
-          
+
           // Forward pass with proper input wrapping
           const input = [new Value(sample.x)];
           const output = network.forward(input);
@@ -281,10 +332,61 @@ export default function TrainingVisualizer({
           const loss = prediction.add(target.mul(-1)).pow(2);
           epochLoss += loss.data;
 
-          // Backward pass and parameter update
+          // Record forward pass state
+          const forwardStep: AnimationStep = {
+            activations: network.getActivations(),
+            loss: loss.data,
+            epoch,
+            sampleIndex: i,
+            predictions: getCurrentPredictions(network, trainData),
+            networkState: network.clone(),
+            animationType: 'forward',
+            gradients: [] // Empty gradients for forward pass
+          };
+          setAnimationSteps(prev => [...prev, forwardStep]);
+
+          // Backward pass
           network.zeroGrad();
-          loss.backward();
-          
+          loss.backward();  // This needs to happen before creating the backwardStep
+
+          // Ensure gradients are captured immediately after backward pass
+          const gradients = network.getGradients();
+          const backwardStep: AnimationStep = {
+            activations: network.getActivations(),
+            loss: loss.data,
+            epoch,
+            sampleIndex: i,
+            predictions: getCurrentPredictions(network, trainData),
+            networkState: network.clone(),
+            animationType: 'backward',
+            gradients, // Use captured gradients
+            gradientUpdates: {
+              weights: network.layers.flatMap((layer, layerIdx) => 
+                layer.neurons.flatMap((neuron, neuronIdx) => 
+                  neuron.w.map((w, inputIdx) => ({
+                    from: inputIdx,
+                    to: neuronIdx,
+                    value: w.grad
+                  }))
+                )
+              ),
+              biases: network.layers.flatMap((layer, layerIdx) =>
+                layer.neurons.map((neuron, neuronIdx) => ({
+                  neuron: neuronIdx,
+                  value: neuron.b.grad
+                }))
+              ),
+              parameterUpdates: network.parameters().map(param => ({
+                param: param._op,
+                oldValue: param.data,
+                newValue: param.data - learningRate * param.grad,
+                delta: -learningRate * param.grad
+              }))
+            }
+          };
+          setAnimationSteps(prev => [...prev, backwardStep]);
+
+          // Update parameters after recording the gradients
           for (const param of network.parameters()) {
             param.data -= learningRate * param.grad;
           }
@@ -299,7 +401,7 @@ export default function TrainingVisualizer({
         // Update predictions state
         setCurrentPredictions(currentPreds);
         setInternalPredictions(currentPreds);
-        
+
         // Update metrics
         const metric: TrainingMetrics = {
           epoch,
@@ -308,7 +410,7 @@ export default function TrainingVisualizer({
           accuracy
         };
         setTrainingMetrics(prev => [...prev, metric]);
-
+        
         // Update animation steps with current network state
         const step: AnimationStep = {
           activations: network.getActivations(),
@@ -319,7 +421,6 @@ export default function TrainingVisualizer({
           networkState: network.clone(),
           testPredictions: getTestPredictions(network, testData)
         };
-        
         setAnimationSteps(prev => [...prev, step]);
         setCurrentEpoch(epoch);
         setTotalLoss(avgLoss);
@@ -346,11 +447,11 @@ export default function TrainingVisualizer({
     for (let i = 1; i < samples.length - 1; i++) {
       const dy1 = samples[i].y - samples[i-1].y;
       const dy2 = samples[i+1].y - samples[i].y;
-      
+
       if (Math.abs(dy1 - dy2) > 0.1) isLinear = false;
       if (Math.abs(dy1/dy2 - 1) > 0.1) isQuadratic = false;
     }
-    
+
     if (isLinear) return 'linear';
     if (isQuadratic) return 'quadratic';
     return 'complex'; // Default for other functions
@@ -375,7 +476,7 @@ export default function TrainingVisualizer({
     const correct = predictions.filter(p => Math.abs(p.predicted - p.y) < threshold).length;
     return correct / predictions.length;
   };
- 
+
   // --------------------------------------------------------------------------
   //  Step-by-Step Training
   // --------------------------------------------------------------------------
@@ -394,7 +495,7 @@ export default function TrainingVisualizer({
       const currentPreds = getCurrentPredictions(network, trainData);
       setCurrentPredictions(currentPreds);
       setInternalPredictions(currentPreds);
-      
+
       // Record step
       setCurrentStep({
         type: 'forward',
@@ -408,7 +509,6 @@ export default function TrainingVisualizer({
 
       setStepPhase('backward');
       console.log('Completed forward pass');
-
     } else {
       // Backward pass with debugging
       console.log('Starting backward pass');
@@ -466,7 +566,7 @@ export default function TrainingVisualizer({
     const xMin = Math.min(...data.map(d => d.x));
     const xMax = Math.max(...data.map(d => d.x));
     const step = (xMax - xMin) / 50; // 50 points for smooth curve
-    
+
     const predictions: Array<{x: number; y: number; predicted: number}> = [];
     
     // Add predictions for the actual data points
@@ -476,7 +576,7 @@ export default function TrainingVisualizer({
       const predicted = Array.isArray(output) ? output[0].data : output.data;
       predictions.push({ x, y: 0, predicted });
     }
-    
+
     return predictions;
   }
 
@@ -582,20 +682,26 @@ export default function TrainingVisualizer({
 
         {/* Animation controls */}
       {animationSteps.length > 0 && (
-        <div className="px-6 py-4 rounded-xl border dark:border-gray-700 bg-card text-card-foreground shadow-sm space-y-4  ">
+        <div className="px-6 py-4 rounded-xl border dark:border-gray-700 bg-card text-card-foreground shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <h4 className="text-lg font-semibold">Playback Controls</h4>
+            <h4 className="text-lg font-semibold">Network Animation</h4>
             <div className="flex items-center gap-2">
-              <TimerIcon className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                Step {currentStepIndex + 1} of {animationSteps.length}
-              </span>
+              <div className={cn(
+                "px-3 py-1 rounded-full text-xs font-medium",
+                animationDirection === 'forward'
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                  : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+              )}>
+                {animationDirection === 'forward' ? 'Forward Pass' : 'Backward Pass'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Sample {(currentStep?.sampleIndex || 0) + 1} / {trainData.length}
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 ml-28">
+          <div className="flex flex-col gap-4">
             <div className="flex items-center justify-center gap-2">
-               
               <Button
                 variant="ghost"
                 size="icon"
@@ -605,7 +711,6 @@ export default function TrainingVisualizer({
               >
                 <TrackPreviousIcon className="h-4 w-4" />
               </Button>
-
               <Button
                 variant="default"
                 size="icon"
@@ -621,7 +726,6 @@ export default function TrainingVisualizer({
                   <PlayIcon className="h-5 w-5" />
                 )}
               </Button>
-
               <Button
                 variant="ghost"
                 size="icon"
@@ -631,7 +735,14 @@ export default function TrainingVisualizer({
               >
                 <TrackNextIcon className="h-4 w-4" />
               </Button>
-
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleDirection}
+                className="h-9 w-9 rounded-full transition-all hover:scale-110"
+              >
+                {animationDirection === 'forward' ? '→' : '←'}
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -641,29 +752,6 @@ export default function TrainingVisualizer({
                 <ResetIcon className="h-4 w-4" />
               </Button>
             </div>
-
-            {/* <div className="flex items-center gap-4 px-2">
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
-                Slow
-              </span>
-              <Slider
-                value={[playbackSpeed]}
-                min={100}
-                max={2000}
-                step={100}
-                onValueChange={(value) => setPlaybackSpeed(value[0])}
-                className="flex-1"
-              />
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
-                Fast
-              </span>
-            </div>
-
-            <div className="flex justify-center">
-              <div className="px-3 py-1 rounded-full bg-muted text-xs text-muted-foreground">
-                {playbackSpeed}ms per step
-              </div>
-            </div> */}
           </div>
         </div>
       )}
@@ -680,12 +768,14 @@ export default function TrainingVisualizer({
                 .filter(p => p._op === 'bias')
                 .map(p => p.data) || []}
               activeLayer={stepPhase === 'forward' ? currentLayerIndex : undefined}
-              phase={stepPhase}
+              phase={currentStep?.type || 'forward'}
+              animationType={currentStep?.type}
+              gradients={animationSteps[currentStepIndex]?.gradients}
             />
           )}
         </div>
       </div>
- 
+
       {/* Training Chart */}
       <TrainingChart
         predictions={displayPredictions.length > 0 ? displayPredictions : internalPredictions}

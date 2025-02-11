@@ -13,6 +13,8 @@ interface NetworkVisualizerProps {
   biases: number[]
   activeLayer?: number
   phase?: 'forward' | 'backward'
+  animationType?: 'forward' | 'backward'
+  gradients?: number[][]
 }
 
 export default function NetworkVisualizer({
@@ -21,6 +23,8 @@ export default function NetworkVisualizer({
   weights: rawWeights,
   biases: rawBiases,
   activeLayer, 
+  animationType = 'forward',
+  gradients
 }: NetworkVisualizerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
@@ -238,16 +242,19 @@ export default function NetworkVisualizer({
                 {Array(layer.neurons).fill(0).map((_, sourceNeuron) =>
                   Array(layers[layerIndex + 1].neurons).fill(0).map((_, targetNeuron) => {
                     const weight = getWeightValue(layerIndex, sourceNeuron, targetNeuron);
-                    const source = getNeuronPosition(layerIndex, sourceNeuron);
-                    const target = getNeuronPosition(layerIndex + 1, targetNeuron);
-
+                    const gradient = animationType === 'backward' && gradients?.[layerIndex] ? 
+                      gradients[layerIndex][sourceNeuron * layers[layerIndex + 1].neurons + targetNeuron] : 
+                      undefined;
+                    
                     return (
                       <Connection
                         key={`${layerIndex}-${sourceNeuron}-${targetNeuron}`}
-                        source={source}
-                        target={target}
+                        source={getNeuronPosition(layerIndex, sourceNeuron)}
+                        target={getNeuronPosition(layerIndex + 1, targetNeuron)}
                         weight={weight}
+                        gradient={gradient}
                         isActive={layerIndex === activeLayer}
+                        animationType={animationType}
                       />
                     );
                   })
@@ -301,6 +308,8 @@ export default function NetworkVisualizer({
                         isActive={layerIndex === activeLayer}
                         layerIndex={layerIndex}
                         neuronIndex={neuronIndex}
+                        phase={animationType}
+                        highlightGradient={animationType === 'backward'}
                       />
                     </div>
                   );

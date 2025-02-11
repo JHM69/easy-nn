@@ -268,6 +268,22 @@ export class NeuronLayer extends Module {
   parameters(): Value[] {
     return this.neurons.flatMap(n => n.parameters());
   }
+
+  getWeights(): Value[][] {
+    return this.neurons.map(n => n.w);
+  }
+
+  getNeuronCount(): number {
+    return this.neurons.length;
+  }
+
+  // Get weights between specific neurons
+  getWeight(fromNeuron: number, toNeuron: number): Value | null {
+    if (fromNeuron < 0 || toNeuron < 0 || toNeuron >= this.neurons.length) {
+      return null;
+    }
+    return this.neurons[toNeuron].w[fromNeuron];
+  }
 }
 
 export class MLP extends Module {
@@ -297,17 +313,21 @@ export class MLP extends Module {
   }
 
   forward(x: Value[]): Value | Value[] {
-    if (x.length !== this.inputSize) {
-      throw new Error(`Input size ${x.length} doesn't match expected size ${this.inputSize}`);
-    }
-
-    this.inputLayer = x; // Store input for getActivations
+    // Store input for backprop
+    this.inputLayer = x;
     let current = x;
     
     try {
+      // Store all intermediate activations for gradient computation
+      const activations: Value[][] = [x];
       for (const layer of this.layers) {
         current = layer.forward(current);
+        activations.push(Array.isArray(current) ? current : [current]);
       }
+      
+      // Store activations for backward pass
+      this._activations = activations;
+      
       return current.length === 1 ? current[0] : current;
     } catch (error) {
       console.error('Forward pass error:', error);
@@ -357,6 +377,44 @@ export class MLP extends Module {
       'relu',
       'linear' // last layer should be linear for regression
     ]);
+  }
+
+  getGradients(): number[][] {
+    const gradients: number[][] = [];
+    
+    // Get gradients for each layer
+    for (const layer of this.layers) {
+      const layerGradients: number[] = [];
+      
+      // Get gradients for each neuron in the layer
+      for (const neuron of layer.neurons) {
+        // Add weight gradients
+        for (const weight of neuron.w) {
+          layerGradients.push(weight.grad);
+        }
+        // Add bias gradient
+        layerGradients.push(neuron.b.grad);
+      }
+      
+      gradients.push(layerGradients);
+    }
+    
+    return gradients;
+  }
+
+  // Helper method to get weight gradient for specific connection
+  getWeightGradient(layerIndex: number, sourceNeuron: number, targetNeuron: number): number {
+    if (layerIndex >= this.layers.length - 1) return 0;
+    
+    const layer = this.layers[layerIndex];
+    const params = layer.parameters();
+    const neuronsInNextLayer = this.layers[layerIndex + 1].neurons.length;
+    
+    // Calculate index in parameters array
+    const weightIndex = (sourceNeuron * neuronsInNextLayer) + targetNeuron;
+    const param = params[weightIndex];
+    
+    return param ? param.grad : 0;
   }
 }
 

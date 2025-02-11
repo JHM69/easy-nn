@@ -4,29 +4,33 @@ interface ConnectionProps {
   source: { x: number; y: number }
   target: { x: number; y: number }
   weight: Value
+  gradient?: number
   isActive?: boolean
+  animationType?: 'forward' | 'backward'
 }
 
 export default function Connection({
   source,
   target,
   weight,
-  isActive = false
+  gradient,
+  isActive = false,
+  animationType = 'forward'
 }: ConnectionProps) {
-  // Ensure weight data is a valid number
-  const weightValue = typeof weight?.data === 'number' && !isNaN(weight.data) 
-    ? weight.data 
-    : 0
-
-  const gradientValue = typeof weight?.grad === 'number' && !isNaN(weight.grad)
-    ? weight.grad
-    : 0
-
-  // Calculate visual properties with validated values
-  const strokeWidth = Math.max(Math.min(Math.abs(weightValue) * 5, 4), 2.5)
-  const opacity = Math.max(Math.min(Math.abs(weightValue), 3), 0.3)
-  const color = weightValue >= 0 ? '#34D399' : '#F87171'
+  // Calculate visual properties
+  const weightValue = weight?.data || 0;
+  const gradientValue = animationType === 'backward' ? (gradient || weight?.grad || 0) : 0;
   
+  // Adjust stroke properties based on animation type
+  const strokeWidth = Math.max(Math.min(Math.abs(weightValue) * 5, 4), 2.5);
+  const opacity = animationType === 'backward' 
+    ? Math.max(Math.min(Math.abs(gradientValue) * 2, 1), 0.3)
+    : Math.max(Math.min(Math.abs(weightValue), 1), 0.3);
+  
+  const color = animationType === 'backward'
+    ? (gradientValue >= 0 ? '#34D399' : '#F87171')
+    : (weightValue >= 0 ? '#60A5FA' : '#F87171');
+
   // Calculate midpoint for tooltip positioning
   const midX = (source.x + target.x) / 2
   const midY = (source.y + target.y) / 2
